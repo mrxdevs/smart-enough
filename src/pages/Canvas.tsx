@@ -70,10 +70,9 @@ const Canvas = () => {
     if (userId) {
       const loadCanvas = async () => {
         try {
-          // Use any type to bypass TypeScript checking for the table query
-          // We know the table structure from our own definition
-          const { data, error } = await supabase
-            .from("canvases" as any)
+          // Table typing workaround, since the Supabase schema is empty
+          const { data, error } = await (supabase
+            .from("canvases") as any)
             .select("*")
             .eq("user_id", userId)
             .order("updated_at", { ascending: false })
@@ -82,17 +81,16 @@ const Canvas = () => {
             
           if (error) {
             console.error("Error loading canvas:", error);
-            // Don't show toast for first load error (table might not exist yet)
             return;
           }
           
           if (data) {
             setCanvasData(data as CanvasData);
-            setCanvasTitle(data.title || "Untitled Canvas");
+            setCanvasTitle((data as CanvasData).title || "Untitled Canvas");
             
             // Load canvas content
             const canvas = canvasRef.current;
-            if (canvas && data.content) {
+            if (canvas && (data as CanvasData).content) {
               const ctx = canvas.getContext("2d");
               if (ctx) {
                 const img = new Image();
@@ -100,7 +98,7 @@ const Canvas = () => {
                   ctx.clearRect(0, 0, canvas.width, canvas.height);
                   ctx.drawImage(img, 0, 0);
                 };
-                img.src = data.content;
+                img.src = (data as CanvasData).content;
               }
             }
           }
@@ -128,10 +126,10 @@ const Canvas = () => {
         content: content
       };
       
-      // If we have an existing canvas, update it
+      // Update existing canvas
       if (canvasData?.id) {
-        const { error } = await supabase
-          .from("canvases" as any)
+        const { error } = await (supabase
+          .from("canvases") as any)
           .update({
             title: canvasTitle,
             content: content,
@@ -145,10 +143,10 @@ const Canvas = () => {
           return;
         }
       } else {
-        // Try to insert a new canvas
+        // Insert a new canvas
         try {
-          const { error } = await supabase
-            .from("canvases" as any)
+          const { error } = await (supabase
+            .from("canvases") as any)
             .insert(canvasToSave as any);
             
           if (error) {
@@ -157,9 +155,9 @@ const Canvas = () => {
             return;
           }
           
-          // Get the newly created canvas
-          const { data, error: fetchError } = await supabase
-            .from("canvases" as any)
+          // Fetch newly created canvas
+          const { data, error: fetchError } = await (supabase
+            .from("canvases") as any)
             .select("*")
             .eq("user_id", userId)
             .order("created_at", { ascending: false })
@@ -197,26 +195,23 @@ const Canvas = () => {
     
     let clientX, clientY;
     
+    const rect = canvas.getBoundingClientRect();
+
     if ('touches' in e) {
-      // Touch event
-      const rect = canvas.getBoundingClientRect();
       clientX = e.touches[0].clientX - rect.left;
       clientY = e.touches[0].clientY - rect.top;
     } else {
-      // Mouse event
-      const rect = canvas.getBoundingClientRect();
       clientX = e.clientX - rect.left;
       clientY = e.clientY - rect.top;
     }
-    
+
     ctx.moveTo(clientX, clientY);
-    
-    // Apply settings
+
     ctx.strokeStyle = color;
     ctx.lineWidth = parseInt(brushSize);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    
+
     if (tool === 'eraser') {
       ctx.globalCompositeOperation = 'destination-out';
     } else {
@@ -234,20 +229,17 @@ const Canvas = () => {
     if (!ctx) return;
     
     let clientX, clientY;
-    
+    const rect = canvas.getBoundingClientRect();
+
     if ('touches' in e) {
-      // Touch event
-      e.preventDefault(); // Prevent scrolling when drawing
-      const rect = canvas.getBoundingClientRect();
+      (e as any).preventDefault();
       clientX = e.touches[0].clientX - rect.left;
       clientY = e.touches[0].clientY - rect.top;
     } else {
-      // Mouse event
-      const rect = canvas.getBoundingClientRect();
       clientX = e.clientX - rect.left;
       clientY = e.clientY - rect.top;
     }
-    
+
     ctx.lineTo(clientX, clientY);
     ctx.stroke();
   };
@@ -277,7 +269,6 @@ const Canvas = () => {
   
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setCanvasTitle(e.target.value);
-    // Debounced save when title changes
     saveCanvasToSupabase();
   };
   
@@ -320,7 +311,10 @@ const Canvas = () => {
             <div className="flex items-center gap-3">
               <Input
                 value={canvasTitle}
-                onChange={handleTitleChange}
+                onChange={(e) => {
+                  setCanvasTitle(e.target.value);
+                  saveCanvasToSupabase();
+                }}
                 className="w-40 h-8"
               />
               <Select value={tool} onValueChange={setTool}>
@@ -355,10 +349,20 @@ const Canvas = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={clearCanvas}>
+              <Button variant="outline" size="sm" onClick={() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext("2d");
+                if (!ctx) return;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                saveCanvasToSupabase();
+              }}>
                 Clear
               </Button>
-              <Button size="sm" onClick={saveCanvas}>
+              <Button size="sm" onClick={() => {
+                saveCanvasToSupabase();
+                toast.success("Canvas saved successfully");
+              }}>
                 Save
               </Button>
               {saveStatus && (
@@ -372,13 +376,123 @@ const Canvas = () => {
             <canvas
               ref={canvasRef}
               className="touch-none"
-              onMouseDown={startDrawing}
-              onMouseMove={draw}
-              onMouseUp={stopDrawing}
-              onMouseLeave={stopDrawing}
-              onTouchStart={startDrawing}
-              onTouchMove={draw}
-              onTouchEnd={stopDrawing}
+              onMouseDown={(e) => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+                
+                setIsDrawing(true);
+                
+                ctx.beginPath();
+                
+                let clientX, clientY;
+                
+                const rect = canvas.getBoundingClientRect();
+
+                if ('touches' in e) {
+                  clientX = e.touches[0].clientX - rect.left;
+                  clientY = e.touches[0].clientY - rect.top;
+                } else {
+                  clientX = e.clientX - rect.left;
+                  clientY = e.clientY - rect.top;
+                }
+
+                ctx.moveTo(clientX, clientY);
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = parseInt(brushSize);
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                if (tool === 'eraser') {
+                  ctx.globalCompositeOperation = 'destination-out';
+                } else {
+                  ctx.globalCompositeOperation = 'source-over';
+                }
+              }}
+              onMouseMove={(e) => {
+                if (!isDrawing) return;
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+                let clientX, clientY;
+                const rect = canvas.getBoundingClientRect();
+
+                if ('touches' in e) {
+                  (e as any).preventDefault();
+                  clientX = e.touches[0].clientX - rect.left;
+                  clientY = e.touches[0].clientY - rect.top;
+                } else {
+                  clientX = e.clientX - rect.left;
+                  clientY = e.clientY - rect.top;
+                }
+
+                ctx.lineTo(clientX, clientY);
+                ctx.stroke();
+              }}
+              onMouseUp={() => {
+                if (isDrawing) {
+                  setIsDrawing(false);
+                  saveCanvasToSupabase();
+                }
+              }}
+              onMouseLeave={() => {
+                if (isDrawing) {
+                  setIsDrawing(false);
+                  saveCanvasToSupabase();
+                }
+              }}
+              onTouchStart={(e) => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+                setIsDrawing(true);
+                ctx.beginPath();
+                let clientX, clientY;
+                const rect = canvas.getBoundingClientRect();
+
+                if ('touches' in e) {
+                  clientX = e.touches[0].clientX - rect.left;
+                  clientY = e.touches[0].clientY - rect.top;
+                }
+                ctx.moveTo(clientX, clientY);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = parseInt(brushSize);
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                if (tool === 'eraser') {
+                  ctx.globalCompositeOperation = 'destination-out';
+                } else {
+                  ctx.globalCompositeOperation = 'source-over';
+                }
+              }}
+              onTouchMove={(e) => {
+                if (!isDrawing) return;
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+                let clientX, clientY;
+                const rect = canvas.getBoundingClientRect();
+
+                if ('touches' in e) {
+                  (e as any).preventDefault();
+                  clientX = e.touches[0].clientX - rect.left;
+                  clientY = e.touches[0].clientY - rect.top;
+                }
+                ctx.lineTo(clientX, clientY);
+                ctx.stroke();
+              }}
+              onTouchEnd={() => {
+                if (isDrawing) {
+                  setIsDrawing(false);
+                  saveCanvasToSupabase();
+                }
+              }}
             />
           </div>
         </CardContent>
