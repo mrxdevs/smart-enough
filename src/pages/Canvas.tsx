@@ -3,14 +3,24 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "@/components/ui/sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
+import { CanvasData } from "@/types/canvas";
+
+// Helper: debounce function to limit how often a function can be called
+const debounce = (func: Function, wait: number) => {
+  let timeout: ReturnType<typeof setTimeout>;
+  return function executedFunction(...args: any[]) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+};
 
 const Canvas = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -20,6 +30,160 @@ const Canvas = () => {
   const [tool, setTool] = useState("pencil");
   const [canvasTitle, setCanvasTitle] = useState("Untitled Canvas");
   const [saveStatus, setSaveStatus] = useState("");
+  const [canvasData, setCanvasData] = useState<CanvasData | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  // Check authentication status
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        setIsAuthenticated(true);
+        setUserId(data.session.user.id);
+      } else {
+        navigate("/auth");
+      }
+    };
+    
+    checkAuth();
+    
+    // Subscribe to auth changes
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        setIsAuthenticated(true);
+        setUserId(session.user.id);
+      } else {
+        setIsAuthenticated(false);
+        setUserId(null);
+        navigate("/auth");
+      }
+    });
+    
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, [navigate]);
+
+  // Load canvas data
+  useEffect(() => {
+    if (userId) {
+      const loadCanvas = async () => {
+        try {
+          // We're making a direct query to the 'canvases' table
+          // If the table doesn't exist yet, this will fail silently
+          const { data, error } = await supabase
+            .from("canvases")
+            .select("*")
+            .eq("user_id", userId)
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+            
+          if (error) {
+            console.error("Error loading canvas:", error);
+            // Don't show toast for first load error (table might not exist yet)
+            return;
+          }
+          
+          if (data) {
+            setCanvasData(data as unknown as CanvasData);
+            setCanvasTitle(data.title || "Untitled Canvas");
+            
+            // Load canvas content
+            const canvas = canvasRef.current;
+            if (canvas && data.content) {
+              const ctx = canvas.getContext("2d");
+              if (ctx) {
+                const img = new Image();
+                img.onload = () => {
+                  ctx.clearRect(0, 0, canvas.width, canvas.height);
+                  ctx.drawImage(img, 0, 0);
+                };
+                img.src = data.content;
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error loading canvas:", error);
+        }
+      };
+      
+      loadCanvas();
+    }
+  }, [userId]);
+
+  // Save canvas data with debounce (to prevent too frequent saves)
+  const saveCanvasToSupabase = debounce(async () => {
+    if (!userId || !isAuthenticated) return;
+    
+    try {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      
+      const content = canvas.toDataURL("image/png");
+      const canvasToSave: CanvasData = {
+        user_id: userId,
+        title: canvasTitle,
+        content: content
+      };
+      
+      // If we have an existing canvas, update it
+      if (canvasData?.id) {
+        const { error } = await supabase
+          .from("canvases")
+          .update({
+            title: canvasTitle,
+            content: content,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", canvasData.id);
+          
+        if (error) {
+          console.error("Error updating canvas:", error);
+          toast.error("Failed to save canvas");
+          return;
+        }
+      } else {
+        // Try to insert a new canvas
+        try {
+          const { error } = await supabase
+            .from("canvases")
+            .insert(canvasToSave);
+            
+          if (error) {
+            console.error("Error creating canvas:", error);
+            toast.error("Failed to create canvas");
+            return;
+          }
+          
+          // Get the newly created canvas
+          const { data, error: fetchError } = await supabase
+            .from("canvases")
+            .select("*")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+            
+          if (fetchError) {
+            console.error("Error fetching new canvas:", fetchError);
+          } else {
+            setCanvasData(data as unknown as CanvasData);
+          }
+        } catch (error) {
+          console.error("Error in canvas creation flow:", error);
+        }
+      }
+      
+      setSaveStatus("Canvas saved");
+      setTimeout(() => setSaveStatus(""), 3000);
+    } catch (error) {
+      console.error("Error saving canvas:", error);
+      toast.error("Failed to save canvas");
+    }
+  }, 2000);
 
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -90,33 +254,32 @@ const Canvas = () => {
   };
   
   const stopDrawing = () => {
-    setIsDrawing(false);
+    if (isDrawing) {
+      setIsDrawing(false);
+      saveCanvasToSupabase();
+    }
   };
   
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    saveCanvasToSupabase();
   };
   
   const saveCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    // In a real app with Supabase, we'd save to the database
-    // For now, we'll just download the image
-    const dataUrl = canvas.toDataURL('image/png');
-    const link = document.createElement('a');
-    link.download = `${canvasTitle.replace(/\s+/g, '-').toLowerCase()}.png`;
-    link.href = dataUrl;
-    link.click();
-    
-    setSaveStatus("Canvas saved locally");
-    setTimeout(() => setSaveStatus(""), 3000);
+    saveCanvasToSupabase();
+    toast.success("Canvas saved successfully");
+  };
+  
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCanvasTitle(e.target.value);
+    // Debounced save when title changes
+    saveCanvasToSupabase();
   };
   
   useEffect(() => {
@@ -133,12 +296,17 @@ const Canvas = () => {
     };
     
     resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener("resize", resizeCanvas);
     
     return () => {
-      window.removeEventListener('resize', resizeCanvas);
+      window.removeEventListener("resize", resizeCanvas);
     };
   }, []);
+
+  // Don't render anything until authentication is checked
+  if (!isAuthenticated && userId === null) {
+    return null;
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -153,7 +321,7 @@ const Canvas = () => {
             <div className="flex items-center gap-3">
               <Input
                 value={canvasTitle}
-                onChange={(e) => setCanvasTitle(e.target.value)}
+                onChange={handleTitleChange}
                 className="w-40 h-8"
               />
               <Select value={tool} onValueChange={setTool}>
@@ -172,7 +340,7 @@ const Canvas = () => {
                   value={color}
                   onChange={(e) => setColor(e.target.value)}
                   className="w-8 h-8 rounded border cursor-pointer"
-                  disabled={tool === 'eraser'}
+                  disabled={tool === "eraser"}
                 />
                 <Select value={brushSize} onValueChange={setBrushSize}>
                   <SelectTrigger className="w-20 h-8">
