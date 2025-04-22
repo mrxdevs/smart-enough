@@ -1,13 +1,16 @@
+
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import debounce from "lodash/debounce";
+import type { Database } from "@/types/supabase";
+
+type CanvasRow = Database["public"]["Tables"]["canvases"]["Row"];
 
 const Canvas = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -17,18 +20,18 @@ const Canvas = () => {
   const [tool, setTool] = useState("pencil");
   const [canvasTitle, setCanvasTitle] = useState("Untitled Canvas");
   const { user } = useAuth();
+  const [canvasData, setCanvasData] = useState<CanvasRow | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !user) return;
 
-    // Load existing canvas data
     const loadCanvas = async () => {
       const { data, error } = await supabase
         .from("canvases")
-        .select("content, title")
+        .select()
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
       if (error) {
         toast.error("Error loading canvas");
@@ -37,6 +40,7 @@ const Canvas = () => {
 
       if (data) {
         setCanvasTitle(data.title);
+        setCanvasData(data);
         // Implement canvas content loading logic here
       }
     };
@@ -44,25 +48,31 @@ const Canvas = () => {
     loadCanvas();
   }, [user]);
 
-  // Debounce save function to prevent too many API calls
+  // Debounced save function
   const saveCanvas = debounce(async () => {
     if (!user || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
     const content = canvas.toDataURL();
 
+    const canvasData = {
+      user_id: user.id,
+      title: canvasTitle,
+      content: content,
+    };
+
     const { error } = await supabase
       .from("canvases")
-      .upsert({
-        user_id: user.id,
-        title: canvasTitle,
-        content,
-        updated_at: new Date().toISOString(),
-      });
+      .upsert(canvasData)
+      .select()
+      .single();
 
     if (error) {
       toast.error("Error saving canvas");
+      return;
     }
+
+    toast.success("Canvas saved");
   }, 1000);
 
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
@@ -167,7 +177,10 @@ const Canvas = () => {
             <div className="flex items-center gap-3">
               <Input
                 value={canvasTitle}
-                onChange={(e) => setCanvasTitle(e.target.value)}
+                onChange={(e) => {
+                  setCanvasTitle(e.target.value);
+                  saveCanvas();
+                }}
                 className="w-40 h-8"
               />
               <Select value={tool} onValueChange={setTool}>
@@ -186,7 +199,7 @@ const Canvas = () => {
                   value={color}
                   onChange={(e) => setColor(e.target.value)}
                   className="w-8 h-8 rounded border cursor-pointer"
-                  disabled={tool === 'eraser'}
+                  disabled={tool === "eraser"}
                 />
                 <Select value={brushSize} onValueChange={setBrushSize}>
                   <SelectTrigger className="w-20 h-8">
@@ -202,8 +215,8 @@ const Canvas = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={clearCanvas}>
-                Clear
+              <Button variant="outline" size="sm" onClick={saveCanvas}>
+                Save
               </Button>
             </div>
           </div>
