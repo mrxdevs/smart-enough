@@ -1,16 +1,13 @@
-
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useParams } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
+import debounce from "lodash/debounce";
 
 const Canvas = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -19,7 +16,54 @@ const Canvas = () => {
   const [brushSize, setBrushSize] = useState("2");
   const [tool, setTool] = useState("pencil");
   const [canvasTitle, setCanvasTitle] = useState("Untitled Canvas");
-  const [saveStatus, setSaveStatus] = useState("");
+  const { user } = useAuth();
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !user) return;
+
+    // Load existing canvas data
+    const loadCanvas = async () => {
+      const { data, error } = await supabase
+        .from("canvases")
+        .select("content, title")
+        .eq("user_id", user.id)
+        .single();
+
+      if (error) {
+        toast.error("Error loading canvas");
+        return;
+      }
+
+      if (data) {
+        setCanvasTitle(data.title);
+        // Implement canvas content loading logic here
+      }
+    };
+
+    loadCanvas();
+  }, [user]);
+
+  // Debounce save function to prevent too many API calls
+  const saveCanvas = debounce(async () => {
+    if (!user || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const content = canvas.toDataURL();
+
+    const { error } = await supabase
+      .from("canvases")
+      .upsert({
+        user_id: user.id,
+        title: canvasTitle,
+        content,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (error) {
+      toast.error("Error saving canvas");
+    }
+  }, 1000);
 
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -67,19 +111,16 @@ const Canvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
     
     let clientX, clientY;
     
-    if ('touches' in e) {
-      // Touch event
-      e.preventDefault(); // Prevent scrolling when drawing
+    if ("touches" in e) {
       const rect = canvas.getBoundingClientRect();
       clientX = e.touches[0].clientX - rect.left;
       clientY = e.touches[0].clientY - rect.top;
     } else {
-      // Mouse event
       const rect = canvas.getBoundingClientRect();
       clientX = e.clientX - rect.left;
       clientY = e.clientY - rect.top;
@@ -87,6 +128,9 @@ const Canvas = () => {
     
     ctx.lineTo(clientX, clientY);
     ctx.stroke();
+    
+    // Save canvas after drawing
+    saveCanvas();
   };
   
   const stopDrawing = () => {
@@ -103,42 +147,12 @@ const Canvas = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
   
-  const saveCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    // In a real app with Supabase, we'd save to the database
-    // For now, we'll just download the image
-    const dataUrl = canvas.toDataURL('image/png');
-    const link = document.createElement('a');
-    link.download = `${canvasTitle.replace(/\s+/g, '-').toLowerCase()}.png`;
-    link.href = dataUrl;
-    link.click();
-    
-    setSaveStatus("Canvas saved locally");
-    setTimeout(() => setSaveStatus(""), 3000);
-  };
-  
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    // Set canvas dimensions to match its container size
-    const resizeCanvas = () => {
-      const container = canvas.parentElement;
-      if (!container) return;
-      
-      canvas.width = container.clientWidth;
-      canvas.height = container.clientHeight;
-    };
-    
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    
+    // Save canvas when component unmounts
     return () => {
-      window.removeEventListener('resize', resizeCanvas);
+      saveCanvas();
     };
-  }, []);
+  }, [saveCanvas]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -191,12 +205,6 @@ const Canvas = () => {
               <Button variant="outline" size="sm" onClick={clearCanvas}>
                 Clear
               </Button>
-              <Button size="sm" onClick={saveCanvas}>
-                Save
-              </Button>
-              {saveStatus && (
-                <span className="text-xs text-green-600">{saveStatus}</span>
-              )}
             </div>
           </div>
         </CardHeader>
