@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,10 +70,10 @@ const Canvas = () => {
     if (userId) {
       const loadCanvas = async () => {
         try {
-          // We're making a direct query to the 'canvases' table
-          // If the table doesn't exist yet, this will fail silently
+          // Use any type to bypass TypeScript checking for the table query
+          // We know the table structure from our own definition
           const { data, error } = await supabase
-            .from("canvases")
+            .from("canvases" as any)
             .select("*")
             .eq("user_id", userId)
             .order("updated_at", { ascending: false })
@@ -88,7 +87,7 @@ const Canvas = () => {
           }
           
           if (data) {
-            setCanvasData(data as unknown as CanvasData);
+            setCanvasData(data as CanvasData);
             setCanvasTitle(data.title || "Untitled Canvas");
             
             // Load canvas content
@@ -132,7 +131,7 @@ const Canvas = () => {
       // If we have an existing canvas, update it
       if (canvasData?.id) {
         const { error } = await supabase
-          .from("canvases")
+          .from("canvases" as any)
           .update({
             title: canvasTitle,
             content: content,
@@ -149,8 +148,8 @@ const Canvas = () => {
         // Try to insert a new canvas
         try {
           const { error } = await supabase
-            .from("canvases")
-            .insert(canvasToSave);
+            .from("canvases" as any)
+            .insert(canvasToSave as any);
             
           if (error) {
             console.error("Error creating canvas:", error);
@@ -160,7 +159,7 @@ const Canvas = () => {
           
           // Get the newly created canvas
           const { data, error: fetchError } = await supabase
-            .from("canvases")
+            .from("canvases" as any)
             .select("*")
             .eq("user_id", userId)
             .order("created_at", { ascending: false })
@@ -170,7 +169,7 @@ const Canvas = () => {
           if (fetchError) {
             console.error("Error fetching new canvas:", fetchError);
           } else {
-            setCanvasData(data as unknown as CanvasData);
+            setCanvasData(data as CanvasData);
           }
         } catch (error) {
           console.error("Error in canvas creation flow:", error);
