@@ -49,6 +49,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Set up auth subscription
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        console.log("Auth state changed:", event, session);
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
@@ -84,8 +85,14 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     const checkAuth = async () => {
-      const { data } = await supabase.auth.getSession();
-      setIsAuthenticated(!!data.session);
+      try {
+        const { data } = await supabase.auth.getSession();
+        console.log("Auth check result:", data);
+        setIsAuthenticated(!!data.session);
+      } catch (error) {
+        console.error("Auth check error:", error);
+        setIsAuthenticated(false);
+      }
     };
     
     checkAuth();
@@ -93,7 +100,11 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
   if (isAuthenticated === null) {
     // Still checking auth status
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
   }
 
   return isAuthenticated ? <>{children}</> : <Navigate to="/auth" />;
