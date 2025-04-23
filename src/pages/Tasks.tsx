@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect, useContext } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,42 +12,121 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-// Mock data for now until we have Supabase integration
-const initialTasks = [
-  { id: 1, title: "Update project documentation", status: "todo", tag: "documentation" },
-  { id: 2, title: "Design new landing page", status: "in-progress", tag: "design" },
-  { id: 3, title: "Fix responsiveness issues", status: "in-progress", tag: "bug" },
-  { id: 4, title: "Prepare client presentation", status: "todo", tag: "meeting" },
-  { id: 5, title: "Implement authentication flow", status: "todo", tag: "development" },
-  { id: 6, title: "Create wireframes for mobile app", status: "completed", tag: "design" },
-  { id: 7, title: "Update API documentation", status: "completed", tag: "documentation" },
-];
+import { supabase } from "@/integrations/supabase/client";
+import { AuthContext } from "@/App";
+import { toast } from "@/components/ui/sonner";
+import { TaskData } from "@/types/task";
 
 const Tasks = () => {
-  const [tasks, setTasks] = useState(initialTasks);
+  const [tasks, setTasks] = useState<TaskData[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskTag, setNewTaskTag] = useState("task");
   const [filter, setFilter] = useState("all");
+  const [isLoading, setIsLoading] = useState(true);
+  const { user } = useContext(AuthContext);
   
-  const handleAddTask = () => {
-    if (newTaskTitle.trim() === "") return;
-    
-    const newTask = {
-      id: tasks.length + 1,
-      title: newTaskTitle,
-      status: "todo",
-      tag: newTaskTag,
+  // Fetch tasks from Supabase
+  useEffect(() => {
+    const fetchTasks = async () => {
+      if (!user) return;
+      
+      try {
+        setIsLoading(true);
+        const { data, error } = await supabase
+          .from("tasks")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+          
+        if (error) {
+          console.error("Error fetching tasks:", error);
+          toast.error("Failed to load tasks");
+          return;
+        }
+        
+        if (data) {
+          // Convert database status format to UI format if needed
+          const formattedTasks = data.map(task => ({
+            ...task,
+            status: task.status === "in_progress" ? "in-progress" : task.status
+          }));
+          setTasks(formattedTasks);
+        }
+      } catch (error) {
+        console.error("Error in task fetch:", error);
+        toast.error("Failed to load tasks");
+      } finally {
+        setIsLoading(false);
+      }
     };
     
-    setTasks([...tasks, newTask]);
-    setNewTaskTitle("");
+    fetchTasks();
+  }, [user]);
+  
+  const handleAddTask = async () => {
+    if (!user || newTaskTitle.trim() === "") return;
+    
+    try {
+      const newTask = {
+        user_id: user.id,
+        title: newTaskTitle,
+        status: "todo",
+        tag: newTaskTag,
+      };
+      
+      // Add to Supabase
+      const { data, error } = await supabase
+        .from("tasks")
+        .insert(newTask)
+        .select();
+        
+      if (error) {
+        console.error("Error adding task:", error);
+        toast.error("Failed to add task");
+        return;
+      }
+      
+      // Update local state
+      if (data && data.length > 0) {
+        setTasks([data[0], ...tasks]);
+        setNewTaskTitle("");
+        toast.success("Task added successfully");
+      }
+    } catch (error) {
+      console.error("Error in add task flow:", error);
+      toast.error("Failed to add task");
+    }
   };
   
-  const handleStatusChange = (taskId: number, newStatus: string) => {
-    setTasks(tasks.map(task => 
-      task.id === taskId ? { ...task, status: newStatus } : task
-    ));
+  const handleStatusChange = async (taskId: string, newStatus: string) => {
+    if (!user) return;
+    
+    try {
+      // Convert UI status format to database format if needed
+      const dbStatus = newStatus === "in-progress" ? "in_progress" : newStatus;
+      
+      // Update in Supabase
+      const { error } = await supabase
+        .from("tasks")
+        .update({ status: dbStatus })
+        .eq("id", taskId);
+        
+      if (error) {
+        console.error("Error updating task status:", error);
+        toast.error("Failed to update task");
+        return;
+      }
+      
+      // Update local state
+      setTasks(tasks.map(task => 
+        task.id === taskId ? { ...task, status: newStatus } : task
+      ));
+      
+      toast.success("Task updated successfully");
+    } catch (error) {
+      console.error("Error in status update flow:", error);
+      toast.error("Failed to update task");
+    }
   };
   
   const filteredTasks = filter === "all" 
@@ -121,58 +200,64 @@ const Tasks = () => {
             </Button>
           </div>
           
-          <div className="space-y-2">
-            {filteredTasks.map((task) => (
-              <div 
-                key={task.id} 
-                className={`flex items-center justify-between p-3 rounded-md hover:bg-muted transition-colors duration-200 ${
-                  task.status === 'completed' ? 'bg-muted/50' : ''
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  <Button
-                    size="icon"
-                    variant={task.status === 'completed' ? 'default' : 'outline'}
-                    className="h-6 w-6 rounded-full"
-                    onClick={() => handleStatusChange(
-                      task.id, 
-                      task.status === 'completed' ? 'todo' : 'completed'
-                    )}
-                  >
-                    {task.status === 'completed' && <Check className="h-3 w-3" />}
-                  </Button>
-                  <span className={task.status === 'completed' ? 'line-through text-muted-foreground' : ''}>
-                    {task.title}
-                  </span>
-                  <Badge className={`text-xs ${getTagColor(task.tag)}`} variant="outline">
-                    {task.tag}
-                  </Badge>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredTasks.length === 0 ? (
+                <div className="text-center py-6 text-muted-foreground">
+                  No tasks found. Add some tasks to get started.
                 </div>
-                
-                {task.status !== 'completed' && (
-                  <Select
-                    value={task.status}
-                    onValueChange={(value) => handleStatusChange(task.id, value)}
+              ) : (
+                filteredTasks.map((task) => (
+                  <div 
+                    key={task.id} 
+                    className={`flex items-center justify-between p-3 rounded-md hover:bg-muted transition-colors duration-200 ${
+                      task.status === 'completed' ? 'bg-muted/50' : ''
+                    }`}
                   >
-                    <SelectTrigger className="w-32 h-7 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="todo">To Do</SelectItem>
-                      <SelectItem value="in-progress">In Progress</SelectItem>
-                      <SelectItem value="completed">Completed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-            ))}
-            
-            {filteredTasks.length === 0 && (
-              <div className="text-center py-6 text-muted-foreground">
-                No tasks found. Add some tasks to get started.
-              </div>
-            )}
-          </div>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        size="icon"
+                        variant={task.status === 'completed' ? 'default' : 'outline'}
+                        className="h-6 w-6 rounded-full"
+                        onClick={() => handleStatusChange(
+                          task.id!, 
+                          task.status === 'completed' ? 'todo' : 'completed'
+                        )}
+                      >
+                        {task.status === 'completed' && <Check className="h-3 w-3" />}
+                      </Button>
+                      <span className={task.status === 'completed' ? 'line-through text-muted-foreground' : ''}>
+                        {task.title}
+                      </span>
+                      <Badge className={`text-xs ${getTagColor(task.tag || 'task')}`} variant="outline">
+                        {task.tag || 'task'}
+                      </Badge>
+                    </div>
+                    
+                    {task.status !== 'completed' && (
+                      <Select
+                        value={task.status}
+                        onValueChange={(value) => handleStatusChange(task.id!, value)}
+                      >
+                        <SelectTrigger className="w-32 h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="todo">To Do</SelectItem>
+                          <SelectItem value="in-progress">In Progress</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

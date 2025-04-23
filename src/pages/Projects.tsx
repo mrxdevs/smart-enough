@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect, useContext } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,80 +13,96 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { FolderOpen, Plus, ListTodo, FileText, Calendar } from "lucide-react";
+import { FolderOpen, Plus, ListTodo, Calendar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-
-// Mock data for now until we have Supabase integration
-const initialProjects = [
-  { 
-    id: 1, 
-    name: "Website Redesign", 
-    description: "Complete redesign of the company website with new branding.", 
-    totalTasks: 12,
-    completedTasks: 8,
-    progress: 67,
-    dueDate: "2025-05-15",
-    status: "in-progress"
-  },
-  { 
-    id: 2, 
-    name: "Mobile App Development", 
-    description: "Develop a new mobile app for both iOS and Android platforms.", 
-    totalTasks: 20,
-    completedTasks: 5,
-    progress: 25,
-    dueDate: "2025-06-30",
-    status: "in-progress"
-  },
-  { 
-    id: 3, 
-    name: "Marketing Campaign", 
-    description: "Q2 Marketing campaign for new product launch.", 
-    totalTasks: 8,
-    completedTasks: 8,
-    progress: 100,
-    dueDate: "2025-04-10",
-    status: "completed"
-  },
-  { 
-    id: 4, 
-    name: "Content Strategy", 
-    description: "Develop content strategy for the next quarter.", 
-    totalTasks: 6,
-    completedTasks: 0,
-    progress: 0,
-    dueDate: "2025-05-01",
-    status: "not-started"
-  },
-];
+import { supabase } from "@/integrations/supabase/client";
+import { AuthContext } from "@/App";
+import { toast } from "@/components/ui/sonner";
+import { ProjectData } from "@/types/project";
 
 const Projects = () => {
-  const [projects, setProjects] = useState(initialProjects);
+  const [projects, setProjects] = useState<ProjectData[]>([]);
   const [newProject, setNewProject] = useState({
     name: "",
     description: "",
     dueDate: ""
   });
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const { user } = useContext(AuthContext);
   
-  const handleCreateProject = () => {
-    if (newProject.name.trim() === "") return;
-    
-    const createdProject = {
-      id: projects.length + 1,
-      name: newProject.name,
-      description: newProject.description,
-      totalTasks: 0,
-      completedTasks: 0,
-      progress: 0,
-      dueDate: newProject.dueDate,
-      status: "not-started"
+  // Fetch projects from Supabase
+  useEffect(() => {
+    const fetchProjects = async () => {
+      if (!user) return;
+      
+      try {
+        setIsLoading(true);
+        const { data, error } = await supabase
+          .from("projects")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+          
+        if (error) {
+          console.error("Error fetching projects:", error);
+          toast.error("Failed to load projects");
+          return;
+        }
+        
+        if (data) {
+          setProjects(data);
+        }
+      } catch (error) {
+        console.error("Error in project fetch:", error);
+        toast.error("Failed to load projects");
+      } finally {
+        setIsLoading(false);
+      }
     };
     
-    setProjects([...projects, createdProject]);
-    setNewProject({ name: "", description: "", dueDate: "" });
-    setIsDialogOpen(false);
+    fetchProjects();
+  }, [user]);
+  
+  const handleCreateProject = async () => {
+    if (!user || newProject.name.trim() === "") return;
+    
+    try {
+      const projectToCreate = {
+        user_id: user.id,
+        name: newProject.name,
+        description: newProject.description,
+        due_date: newProject.dueDate,
+        total_tasks: 0,
+        completed_tasks: 0,
+        progress: 0,
+        status: "not-started"
+      };
+      
+      // Add to Supabase
+      const { data, error } = await supabase
+        .from("projects")
+        .insert(projectToCreate)
+        .select();
+        
+      if (error) {
+        console.error("Error creating project:", error);
+        toast.error("Failed to create project");
+        return;
+      }
+      
+      // Update local state
+      if (data && data.length > 0) {
+        setProjects([data[0], ...projects]);
+        setNewProject({ name: "", description: "", dueDate: "" });
+        setIsDialogOpen(false);
+        toast.success("Project created successfully");
+      }
+    } catch (error) {
+      console.error("Error in create project flow:", error);
+      toast.error("Failed to create project");
+    }
   };
   
   const getStatusBadge = (status: string) => {
@@ -160,54 +176,64 @@ const Projects = () => {
         </Dialog>
       </div>
       
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {projects.map((project) => (
-          <Card key={project.id} className="project-card">
-            <CardContent className="p-4">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <h3 className="font-medium text-lg">{project.name}</h3>
-                  <p className="text-muted-foreground text-sm mt-1">{project.description}</p>
-                </div>
-                {getStatusBadge(project.status)}
-              </div>
-              
-              <div className="mt-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Progress</span>
-                  <span className="text-sm font-medium">{project.progress}%</span>
-                </div>
-                <Progress value={project.progress} className="h-2" />
-                
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center text-sm text-muted-foreground">
-                    <ListTodo className="h-4 w-4 mr-1" />
-                    <span>{project.completedTasks}/{project.totalTasks} tasks</span>
-                  </div>
-                  
-                  <div className="flex items-center text-sm text-muted-foreground">
-                    <Calendar className="h-4 w-4 mr-1" />
-                    <span>Due {project.dueDate}</span>
-                  </div>
-                </div>
-                
-                <div className="pt-4">
-                  <Button variant="outline" className="w-full" size="sm">
-                    View Project
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      
-      {projects.length === 0 && (
-        <div className="text-center py-10">
-          <FolderOpen className="h-12 w-12 mx-auto text-muted-foreground opacity-50" />
-          <h3 className="mt-4 text-lg font-medium">No projects found</h3>
-          <p className="text-muted-foreground mt-1">Create your first project to get started.</p>
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
         </div>
+      ) : (
+        <>
+          {projects.length > 0 ? (
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {projects.map((project) => (
+                <Card key={project.id} className="project-card">
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h3 className="font-medium text-lg">{project.name}</h3>
+                        <p className="text-muted-foreground text-sm mt-1">{project.description}</p>
+                      </div>
+                      {getStatusBadge(project.status || "not-started")}
+                    </div>
+                    
+                    <div className="mt-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm">Progress</span>
+                        <span className="text-sm font-medium">{project.progress || 0}%</span>
+                      </div>
+                      <Progress value={project.progress || 0} className="h-2" />
+                      
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center text-sm text-muted-foreground">
+                          <ListTodo className="h-4 w-4 mr-1" />
+                          <span>{project.completed_tasks || 0}/{project.total_tasks || 0} tasks</span>
+                        </div>
+                        
+                        {project.due_date && (
+                          <div className="flex items-center text-sm text-muted-foreground">
+                            <Calendar className="h-4 w-4 mr-1" />
+                            <span>Due {new Date(project.due_date).toLocaleDateString()}</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="pt-4">
+                        <Button variant="outline" className="w-full" size="sm">
+                          View Project
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-10">
+              <FolderOpen className="h-12 w-12 mx-auto text-muted-foreground opacity-50" />
+              <h3 className="mt-4 text-lg font-medium">No projects found</h3>
+              <p className="text-muted-foreground mt-1">Create your first project to get started.</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

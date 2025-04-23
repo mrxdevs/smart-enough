@@ -1,52 +1,65 @@
 
-import { useState } from "react";
+import { useState, useEffect, useContext } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, FileText, Tag } from "lucide-react";
+import { Plus, Tag } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-
-// Mock data for now until we have Supabase integration
-const initialNotes = [
-  { 
-    id: 1, 
-    title: "Project requirements", 
-    content: "We need to ensure that all features are properly documented and tested before the release.", 
-    tags: ["documentation", "project"], 
-    createdAt: "2025-04-15"
-  },
-  { 
-    id: 2, 
-    title: "Meeting notes with client", 
-    content: "Discussed timeline and deliverables. Client wants to see the first prototype by next Friday.", 
-    tags: ["meeting", "client"], 
-    createdAt: "2025-04-18" 
-  },
-  { 
-    id: 3, 
-    title: "Design inspiration", 
-    content: "Color palette options: \n- Blue and teal \n- Purple and pink \n- Monochrome with accent colors", 
-    tags: ["design", "inspiration"], 
-    createdAt: "2025-04-20" 
-  },
-  { 
-    id: 4, 
-    title: "API Documentation", 
-    content: "Endpoints: \n- GET /api/users \n- POST /api/users \n- PUT /api/users/:id \n- DELETE /api/users/:id", 
-    tags: ["api", "documentation"], 
-    createdAt: "2025-04-21" 
-  },
-];
+import { supabase } from "@/integrations/supabase/client";
+import { AuthContext } from "@/App";
+import { toast } from "@/components/ui/sonner";
+import { NoteData } from "@/types/note";
 
 const Notes = () => {
-  const [notes, setNotes] = useState(initialNotes);
+  const [notes, setNotes] = useState<NoteData[]>([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [tag, setTag] = useState("");
   const [tags, setTags] = useState<string[]>([]);
-  const [activeNote, setActiveNote] = useState<number | null>(null);
+  const [activeNote, setActiveNote] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const { user } = useContext(AuthContext);
+  
+  // Fetch notes from Supabase
+  useEffect(() => {
+    const fetchNotes = async () => {
+      if (!user) return;
+      
+      try {
+        setIsLoading(true);
+        const { data, error } = await supabase
+          .from("notes")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+          
+        if (error) {
+          console.error("Error fetching notes:", error);
+          toast.error("Failed to load notes");
+          return;
+        }
+        
+        if (data) {
+          // Format notes from database
+          const formattedNotes = data.map(note => ({
+            ...note,
+            tags: note.category ? note.category.split(',') : []
+          }));
+          
+          setNotes(formattedNotes);
+        }
+      } catch (error) {
+        console.error("Error in note fetch:", error);
+        toast.error("Failed to load notes");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchNotes();
+  }, [user]);
   
   const handleAddTag = () => {
     if (tag.trim() !== "" && !tags.includes(tag.trim())) {
@@ -59,36 +72,86 @@ const Notes = () => {
     setTags(tags.filter(t => t !== tagToRemove));
   };
   
-  const handleCreateNote = () => {
-    if (title.trim() === "") return;
+  const handleCreateNote = async () => {
+    if (!user || title.trim() === "") return;
     
-    const newNote = {
-      id: notes.length + 1,
-      title,
-      content,
-      tags,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-    
-    setNotes([...notes, newNote]);
-    resetForm();
+    try {
+      const newNote = {
+        user_id: user.id,
+        title,
+        content,
+        category: tags.join(',') // Store tags as comma-separated string
+      };
+      
+      // Add to Supabase
+      const { data, error } = await supabase
+        .from("notes")
+        .insert(newNote)
+        .select();
+        
+      if (error) {
+        console.error("Error creating note:", error);
+        toast.error("Failed to create note");
+        return;
+      }
+      
+      // Update local state
+      if (data && data.length > 0) {
+        const createdNote = {
+          ...data[0],
+          tags: tags
+        };
+        
+        setNotes([createdNote, ...notes]);
+        resetForm();
+        toast.success("Note created successfully");
+      }
+    } catch (error) {
+      console.error("Error in create note flow:", error);
+      toast.error("Failed to create note");
+    }
   };
   
-  const handleUpdateNote = () => {
-    if (activeNote === null) return;
+  const handleUpdateNote = async () => {
+    if (!user || activeNote === null) return;
     
-    setNotes(notes.map(note => 
-      note.id === activeNote ? { ...note, title, content, tags } : note
-    ));
-    
-    resetForm();
+    try {
+      const updatedNote = {
+        title,
+        content,
+        category: tags.join(','), // Store tags as comma-separated string
+      };
+      
+      // Update in Supabase
+      const { error } = await supabase
+        .from("notes")
+        .update(updatedNote)
+        .eq("id", activeNote);
+        
+      if (error) {
+        console.error("Error updating note:", error);
+        toast.error("Failed to update note");
+        return;
+      }
+      
+      // Update local state
+      setNotes(notes.map(note => 
+        note.id === activeNote ? { ...note, title, content, tags } : note
+      ));
+      
+      resetForm();
+      toast.success("Note updated successfully");
+    } catch (error) {
+      console.error("Error in update note flow:", error);
+      toast.error("Failed to update note");
+    }
   };
   
-  const handleSelectNote = (note: typeof notes[0]) => {
-    setActiveNote(note.id);
+  const handleSelectNote = (note: NoteData) => {
+    setActiveNote(note.id!);
     setTitle(note.title);
-    setContent(note.content);
-    setTags(note.tags);
+    setContent(note.content || "");
+    setTags(note.tags || []);
     setIsEditing(true);
   };
   
@@ -181,7 +244,11 @@ const Notes = () => {
             <h2 className="text-lg font-semibold">All Notes</h2>
           </div>
           
-          {notes.length === 0 ? (
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+            </div>
+          ) : notes.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">
               No notes found. Create your first note.
             </div>
@@ -196,10 +263,12 @@ const Notes = () => {
                   <CardContent className="p-4">
                     <div className="flex justify-between items-start mb-2">
                       <h3 className="font-medium">{note.title}</h3>
-                      <span className="text-xs text-muted-foreground">{note.createdAt}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {note.created_at ? new Date(note.created_at).toLocaleDateString() : ""}
+                      </span>
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{note.content}</p>
-                    {note.tags.length > 0 && (
+                    {note.tags && note.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {note.tags.map((tag) => (
                           <Badge key={tag} variant="secondary" className="text-xs px-1">
