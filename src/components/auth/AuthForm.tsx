@@ -116,4 +116,5 @@ export default function AuthForm() {
         </CardFooter>
       </form>
     </Card>
-  </>;
+  );
+}
