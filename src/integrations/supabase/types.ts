@@ -1,5 +1,3 @@
-import { CanvasData } from "@/types/canvas";
-
 export type Json =
   | string
   | number
@@ -11,52 +9,21 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      canvases: {
-        Row: CanvasData;
-        Insert: Omit<CanvasData, "id" | "created_at" | "updated_at"> & { user_id: string };
-        Update: Partial<Omit<CanvasData, "id" | "created_at" | "user_id">>;
-      };
-      tasks?: {
-        Row: {
-          id?: string;
-          user_id: string;
-          title: string;
-          description?: string;
-          status?: "todo" | "in_progress" | "done";
-          due_date?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Insert: Omit<Database["public"]["Tables"]["tasks"]["Row"], "id" | "created_at" | "updated_at">;
-        Update: Partial<Omit<Database["public"]["Tables"]["tasks"]["Row"], "id" | "created_at" | "user_id">>;
-      };
-      notes?: {
-        Row: {
-          id?: string;
-          user_id: string;
-          title: string;
-          content?: string;
-          category?: string;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Insert: Omit<Database["public"]["Tables"]["notes"]["Row"], "id" | "created_at" | "updated_at">;
-        Update: Partial<Omit<Database["public"]["Tables"]["notes"]["Row"], "id" | "created_at" | "user_id">>;
-      };
-    };
+      [_ in never]: never
+    }
     Views: {
       [_ in never]: never
-    };
+    }
     Functions: {
       [_ in never]: never
-    };
+    }
     Enums: {
-      task_status: "todo" | "in_progress" | "done";
-    };
+      [_ in never]: never
+    }
     CompositeTypes: {
       [_ in never]: never
-    };
-  };
+    }
+  }
 }
 
 type DefaultSchema = Database[Extract<keyof Database, "public">]
@@ -166,8 +133,6 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {
-      task_status: ["todo", "in_progress", "done"] as const,
-    },
+    Enums: {},
   },
 } as const

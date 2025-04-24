@@ -17,6 +17,22 @@ import { AuthContext } from "@/App";
 import { toast } from "@/components/ui/sonner";
 import { TaskData } from "@/types/task";
 
+/**
+ * Converts database status format to application format
+ */
+const dbStatusToAppStatus = (status: string): "todo" | "in-progress" | "completed" => {
+  if (status === "in_progress") return "in-progress";
+  if (status === "todo" || status === "completed") return status as "todo" | "completed";
+  return "todo"; // Default fallback
+};
+
+/**
+ * Converts application status format to database format
+ */
+const appStatusToDbStatus = (status: "todo" | "in-progress" | "completed"): string => {
+  return status === "in-progress" ? "in_progress" : status;
+};
+
 const Tasks = () => {
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState("");
@@ -45,10 +61,10 @@ const Tasks = () => {
         }
         
         if (data) {
-          // Convert database status format to UI format if needed
-          const formattedTasks = data.map(task => ({
+          // Properly convert database status format to UI format
+          const formattedTasks: TaskData[] = data.map(task => ({
             ...task,
-            status: task.status === "in_progress" ? "in-progress" : task.status
+            status: dbStatusToAppStatus(task.status)
           }));
           setTasks(formattedTasks);
         }
@@ -70,7 +86,7 @@ const Tasks = () => {
       const newTask = {
         user_id: user.id,
         title: newTaskTitle,
-        status: "todo",
+        status: "todo" as const,
         tag: newTaskTag,
       };
       
@@ -88,7 +104,11 @@ const Tasks = () => {
       
       // Update local state
       if (data && data.length > 0) {
-        setTasks([data[0], ...tasks]);
+        const formattedTask: TaskData = {
+          ...data[0],
+          status: dbStatusToAppStatus(data[0].status)
+        };
+        setTasks([formattedTask, ...tasks]);
         setNewTaskTitle("");
         toast.success("Task added successfully");
       }
@@ -98,12 +118,12 @@ const Tasks = () => {
     }
   };
   
-  const handleStatusChange = async (taskId: string, newStatus: string) => {
+  const handleStatusChange = async (taskId: string, newStatus: "todo" | "in-progress" | "completed") => {
     if (!user) return;
     
     try {
-      // Convert UI status format to database format if needed
-      const dbStatus = newStatus === "in-progress" ? "in_progress" : newStatus;
+      // Convert UI status format to database format
+      const dbStatus = appStatusToDbStatus(newStatus);
       
       // Update in Supabase
       const { error } = await supabase
@@ -241,7 +261,7 @@ const Tasks = () => {
                     {task.status !== 'completed' && (
                       <Select
                         value={task.status}
-                        onValueChange={(value) => handleStatusChange(task.id!, value)}
+                        onValueChange={(value) => handleStatusChange(task.id!, value as "todo" | "in-progress" | "completed")}
                       >
                         <SelectTrigger className="w-32 h-7 text-xs">
                           <SelectValue />
